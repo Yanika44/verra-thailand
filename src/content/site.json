@@ -1,0 +1,31 @@
+{
+  "name": "Verra Thailand",
+  "legalName": "บริษัท ท๊อป เวอร์ร่า เบดดิ้ง จำกัด",
+  "tagline": "VERRA เบอร์ 1 เรื่องผ้ากันไรฝุ่น",
+  "description": "บริษัท ท๊อป เวอร์ร่า เบดดิ้ง จำกัด เป็น โรงงานผลิตผ้าปูที่นอน VERRA ที่ตัดเย็บและเก็บผ้าม้วน นำเข้าจากต่างประเทศ โดยเริ่มการผลิตมาตั้งแต่ปี 2558 จากการรวมตัวของชาวบ้านในพื้นที่ ต่อมามีการพัฒนาผลิตภัณฑ์โดยการนำเทคโนโลยีที่ทันสมัยมาประยุกต์ใช้ จนได้รับการยอมรับจากลูกค้า โดยเรามีการจำหน่ายสินค้า ทั้งทางหน้าร้าน ที่ตั้งอยู่ในห้างสรรพสินค้าทั่วประเทศ รวมถึงช่องทางออนไลน์",
+  "logo": "/images/logo.png",
+  "contact": {
+    "address": "75 ซอยพหลโยธิน 53 แขวงอนุสาวรีย์ เขตบางเขน กรุงเทพมหานคร 10220",
+    "factory": {
+      "name": "โรงงาน ท๊อป เวอร์ร่า เบดดิ้ง",
+      "address": "เลขที่ 259 หมู่ 10 บ้านหนองขามเหนือ ตำบลโนนสูง อำเภอหยางตลาด จังหวัดกาฬสินธุ์ 46120"
+    },
+    "phone": "089-155-6338",
+    "contactPerson": "คุณกมลวรรณ",
+    "email": "appid.kam@gmail.com",
+    "lineId": "@verra",
+    "lineUrl": "https://line.me/R/ti/p/@verra",
+    "map": {
+      "embedUrl": "https://www.google.com/maps/embed?pb=!1m13!1m8!1m3!1d18425.705879186273!2d100.5834217009555!3d13.867376938707022!3m2!1i1024!2i768!4f13.1!3m2!1m1!2zMTPCsDUyJzA0LjkiTiAxMDDCsDM1JzI2LjciRQ!5e0!3m2!1sen!2sus!4v1689840034542!5m2!1sen!2sus",
+      "lat": 13.867472,
+      "lng": 100.59075
+    }
+  },
+  "socials": {
+    "line": "https://line.me/R/ti/p/@verra",
+    "facebook": "https://www.facebook.com/profile.php?id=100063782476532",
+    "facebookName": "ชุดเครื่องนอนสุขภาพ verra",
+    "shopee": "https://shopee.co.th/verrathailand",
+    "tiktok": "https://www.tiktok.com/@verrathailand"
+  }
+}

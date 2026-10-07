@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* VERRA brand tokens — colors from the original CI (verra-thailand.com) */
+:root {
+  --plum: #6f5b98; /* brand primary */
+  --plum-deep: #574878;
+  --mauve: #ab96b2; /* brand secondary */
+  --ink: #211c18; /* brand text */
+  --ink-soft: #5d5560;
+  --mist: #f7f5fa; /* page background */
+  --sheet: #efeaf4; /* soft surface */
+  --pillow: #ffffff;
+  --line: #e4dde9;
+}
+
+@theme inline {
+  --color-plum: var(--plum);
+  --color-plum-deep: var(--plum-deep);
+  --color-mauve: var(--mauve);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-mist: var(--mist);
+  --color-sheet: var(--sheet);
+  --color-pillow: var(--pillow);
+  --color-line: var(--line);
+  --font-sans: var(--font-thai), var(--font-display), system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-thai), serif;
+  --radius-pillow: 2rem;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--mist);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--plum);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
