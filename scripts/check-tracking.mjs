@@ -1,6 +1,6 @@
 // Checks the Google Apps Script connection used by /tracking.
-// Usage: npm run check:tracking -- [firstName] [phoneLast4]
-const [name = "สมใจ", phone = "1234"] = process.argv.slice(2);
+// Usage: npm run check:tracking -- [phoneLast4]
+const [phone = "1234"] = process.argv.slice(2);
 const url = process.env.TRACKING_API_URL?.trim();
 const token = process.env.TRACKING_API_TOKEN?.trim();
 
@@ -16,7 +16,6 @@ if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(url)) {
 }
 
 const target = new URL(url);
-target.searchParams.set("name", name);
 target.searchParams.set("phone", phone);
 target.searchParams.set("token", token);
 
@@ -46,9 +45,9 @@ if (data.error === "unauthorized") {
 if (!Array.isArray(data.shipments)) fail(`รูปแบบข้อมูลไม่ถูกต้อง: ${text.slice(0, 300)}`);
 
 console.log("✅ เชื่อมต่อ Google Sheet สำเร็จ");
-console.log(`   ค้นหา "${name}" + ${phone} → พบ ${data.shipments.length} รายการ`);
+console.log(`   ค้นหาเบอร์ลงท้าย ${phone} → พบ ${data.shipments.length} รายการ`);
 for (const s of data.shipments) {
-  console.log(`   • ${s.customerName} | ${s.product} | ${s.shipDate} | ${s.carrier} ${s.trackingNo}`);
+  console.log(`   • ${s.recipient} | ${s.shipDate} | ${s.carrier} ${s.trackingNo}`);
 }
 // The website reads all rows (action=all) into its own cache; make sure that works too
 const all = new URL(url);

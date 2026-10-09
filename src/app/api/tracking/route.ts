@@ -3,7 +3,6 @@ import path from "node:path";
 import { cacheLife, cacheTag } from "next/cache";
 import { parseCsv } from "@/lib/csv";
 import {
-  normalizeName,
   PHONE_LAST4_PATTERN,
   rowsFromTable,
   searchRows,
@@ -12,7 +11,8 @@ import {
 } from "@/lib/tracking";
 
 /**
- * Tracking Order search. The browser only ever gets the rows matching name + phone.
+ * Tracking Order search by the last 4 digits of the receiver's phone. The browser only ever
+ * gets the matching parcels, with the receiver's surname masked.
  *
  * Google Apps Script takes 2–40 s to answer, so customers don't wait on it: the server
  * keeps a copy of the sheet's rows (shared cache, refreshed in the background every
@@ -28,7 +28,7 @@ import {
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS = 10;
 const FRESH_MS = 60_000;
-// Best effort: per serverless instance. Enough to slow down guessing names.
+// Best effort: per serverless instance. Enough to slow down guessing numbers.
 const hits = new Map<string, number[]>();
 
 function rateLimited(ip: string) {
@@ -77,9 +77,8 @@ export async function POST(request: Request) {
   if (rateLimited(ip)) return json({ ok: false, error: "rate_limited" }, 429);
 
   const body = await request.json().catch(() => null);
-  const firstName = normalizeName(String(body?.firstName ?? ""));
   const last4 = String(body?.phoneLast4 ?? "").trim();
-  if (firstName.length < 2 || firstName.length > 60 || !PHONE_LAST4_PATTERN.test(last4)) {
+  if (!PHONE_LAST4_PATTERN.test(last4)) {
     return json({ ok: false, error: "invalid" }, 400);
   }
 
@@ -87,9 +86,9 @@ export async function POST(request: Request) {
     const snapshot = await loadRows();
     if (!snapshot) return json({ ok: false, error: "unavailable" }, 503);
 
-    let shipments = searchRows(snapshot.rows, firstName, last4);
+    let shipments = searchRows(snapshot.rows, last4);
     if (shipments.length === 0 && Date.now() - snapshot.fetchedAt > FRESH_MS) {
-      shipments = searchRows((await fetchSheet()).rows, firstName, last4);
+      shipments = searchRows((await fetchSheet()).rows, last4);
     }
     if (shipments.length === 0) return json({ ok: false, error: "not_found" }, 404);
     return json({ ok: true, shipments });

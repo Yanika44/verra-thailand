@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { mainNav, trackingNav } from "@/lib/nav";
+import { mainNav, TRACKING_ONLY, trackingNav } from "@/lib/nav";
 import { site } from "@/lib/content";
 import { channels } from "./channel-links";
 
@@ -7,7 +7,7 @@ export function SiteFooter() {
   const { contact } = site;
   return (
     <footer className="mt-24 bg-plum text-white">
-      <div className="mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr] lg:px-8">
+      <div className={`mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 md:grid-cols-2 lg:px-8 ${TRACKING_ONLY ? "lg:grid-cols-[1.4fr_1fr_1fr]" : "lg:grid-cols-[1.4fr_1fr_1fr_1fr]"}`}>
         <div className="max-w-sm">
           <p className="font-display text-4xl">Verra</p>
           <p className="mt-2 text-white/80">{site.tagline}</p>
@@ -18,18 +18,20 @@ export function SiteFooter() {
           </p>
         </div>
 
-        <nav aria-label="เมนูส่วนท้าย">
-          <h2 className="text-sm text-white/60">เมนู</h2>
-          <ul className="mt-4 space-y-2.5">
-            {[...mainNav, trackingNav].map((item) => (
-              <li key={item.href}>
-                <Link href={item.href} className="text-white/90 hover:text-white hover:underline">
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        {!TRACKING_ONLY && (
+          <nav aria-label="เมนูส่วนท้าย">
+            <h2 className="text-sm text-white/60">เมนู</h2>
+            <ul className="mt-4 space-y-2.5">
+              {[...mainNav, trackingNav].map((item) => (
+                <li key={item.href}>
+                  <Link href={item.href} className="text-white/90 hover:text-white hover:underline">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )}
 
         <div>
           <h2 className="text-sm text-white/60">ติดต่อ</h2>

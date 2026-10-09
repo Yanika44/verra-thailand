@@ -44,3 +44,6 @@ next-env.d.ts
 # Apps Script: per-account clasp project and secret token
 apps-script/.clasp.json
 apps-script/Config.gs
+
+# Real customer data exported from Flash — never commit
+mock/template.xlsx

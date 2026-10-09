@@ -6,8 +6,8 @@ import type { Shipment, TrackingError, TrackingResult } from "@/lib/tracking";
 import { TruckIcon } from "./icons";
 
 const errorText: Record<TrackingError, string> = {
-  invalid: "กรุณากรอกชื่อจริง และเบอร์โทร 4 หลักท้ายให้ถูกต้อง",
-  not_found: "ไม่พบรายการจัดส่ง ตรวจสอบชื่อจริงและเบอร์โทร 4 หลักท้ายที่ใช้สั่งซื้ออีกครั้ง หรือทักแชท LINE @verra",
+  invalid: "กรุณากรอกเบอร์โทร 4 หลักท้ายให้ถูกต้อง",
+  not_found: "ไม่พบรายการจัดส่ง ตรวจสอบเบอร์โทร 4 หลักท้ายของผู้รับอีกครั้ง หรือทักแชท LINE @verra",
   rate_limited: "ค้นหาบ่อยเกินไป กรุณารอ 1 นาทีแล้วลองใหม่",
   unavailable: "ระบบติดตามพัสดุยังไม่พร้อมใช้งาน กรุณาทักแชท LINE @verra",
 };
@@ -19,17 +19,16 @@ function formatDate(value: string) {
   return d.toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" });
 }
 
-function Parcel({ s, label }: { s: Shipment; label?: string }) {
+function Parcel({ s }: { s: Shipment }) {
   const carrier = carrierLink(s.carrier, s.trackingNo);
   const [copied, setCopied] = useState(false);
   return (
-    <section className="rounded-3xl bg-mist p-5">
-      {label && <h3 className="mb-3 text-sm font-medium text-plum">{label}</h3>}
+    <article className="rounded-[2rem] bg-pillow p-5 ring-1 ring-line/70 sm:p-6">
       <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
         {[
-          ["สินค้า", s.product],
-          ["วันที่จัดส่ง", formatDate(s.shipDate)],
+          ["ชื่อผู้รับ", s.recipient],
           ["บริษัทขนส่ง", carrier.name],
+          ["วันที่ส่ง", formatDate(s.shipDate)],
         ]
           .filter(([, v]) => v)
           .map(([k, v]) => (
@@ -39,7 +38,7 @@ function Parcel({ s, label }: { s: Shipment; label?: string }) {
             </div>
           ))}
         <div>
-          <dt className="text-sm text-ink-soft">Tracking Number</dt>
+          <dt className="text-sm text-ink-soft">เลขพัสดุ</dt>
           <dd className="mt-0.5 flex items-center gap-2">
             <span className="text-lg font-semibold text-plum tabular-nums">{s.trackingNo}</span>
             <button
@@ -48,7 +47,7 @@ function Parcel({ s, label }: { s: Shipment; label?: string }) {
                 await navigator.clipboard.writeText(s.trackingNo);
                 setCopied(true);
               }}
-              className="rounded-full bg-pillow px-3 py-1 text-xs text-ink ring-1 ring-line hover:ring-mauve"
+              className="rounded-full bg-mist px-3 py-1 text-xs text-ink ring-1 ring-line hover:ring-mauve"
             >
               {copied ? "คัดลอกแล้ว" : "คัดลอก"}
             </button>
@@ -65,40 +64,8 @@ function Parcel({ s, label }: { s: Shipment; label?: string }) {
           <TruckIcon /> เช็กสถานะพัสดุ
         </a>
       )}
-    </section>
-  );
-}
-
-/** Parcels of one order (same Order No.) shown together. */
-function OrderCard({ parcels }: { parcels: Shipment[] }) {
-  const { orderNo, customerName } = parcels[0];
-  return (
-    <article className="rounded-[2rem] bg-pillow p-5 ring-1 ring-line/70 sm:p-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-1 pb-4">
-        <div>
-          {orderNo && <p className="text-sm text-ink-soft">เลข Order</p>}
-          <h2 className="text-lg font-semibold text-ink">{orderNo ?? customerName}</h2>
-        </div>
-        <p className="text-sm text-ink-soft">
-          {orderNo ? `${customerName} ส่ง ${parcels.length} พัสดุ` : `${parcels.length} พัสดุ`}
-        </p>
-      </header>
-      <div className="space-y-3">
-        {parcels.map((s, i) => (
-          <Parcel key={`${s.trackingNo}-${i}`} s={s} label={parcels.length > 1 ? `พัสดุที่ ${i + 1}` : undefined} />
-        ))}
-      </div>
     </article>
   );
-}
-
-function groupByOrder(shipments: Shipment[]) {
-  const groups = new Map<string, Shipment[]>();
-  shipments.forEach((s, i) => {
-    const key = s.orderNo ?? `#${i}`;
-    groups.set(key, [...(groups.get(key) ?? []), s]);
-  });
-  return [...groups.values()];
 }
 
 export function TrackingForm() {
@@ -114,7 +81,7 @@ export function TrackingForm() {
       const res = await fetch("/api/tracking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ firstName: form.get("firstName"), phoneLast4: form.get("phoneLast4") }),
+        body: JSON.stringify({ phoneLast4: form.get("phoneLast4") }),
       });
       setState((await res.json()) as TrackingResult);
     } catch {
@@ -128,32 +95,19 @@ export function TrackingForm() {
   return (
     <div className="space-y-6">
       <form onSubmit={onSubmit} className="rounded-[2rem] bg-pillow p-6 ring-1 ring-line/70 sm:p-8">
-        <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
-          <label className="block">
-            <span className="text-sm font-medium text-ink">ชื่อจริง</span>
-            <input
-              name="firstName"
-              required
-              autoComplete="given-name"
-              minLength={2}
-              maxLength={60}
-              placeholder="เช่น สมใจ"
-              className="mt-2 w-full rounded-2xl bg-mist px-4 py-3.5 text-ink ring-1 ring-line outline-none placeholder:text-ink-soft/60 focus:ring-2 focus:ring-plum"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium text-ink">เบอร์โทร 4 หลักท้าย</span>
-            <input
-              name="phoneLast4"
-              required
-              inputMode="numeric"
-              pattern="\d{4}"
-              maxLength={4}
-              placeholder="XXXX"
-              className="mt-2 w-full rounded-2xl bg-mist px-4 py-3.5 tracking-[0.3em] text-ink ring-1 ring-line outline-none placeholder:tracking-normal placeholder:text-ink-soft/60 focus:ring-2 focus:ring-plum"
-            />
-          </label>
-        </div>
+        <label className="block">
+          <span className="text-sm font-medium text-ink">เบอร์โทรผู้รับ 4 หลักท้าย</span>
+          <input
+            name="phoneLast4"
+            required
+            inputMode="numeric"
+            pattern="\d{4}"
+            maxLength={4}
+            autoComplete="off"
+            placeholder="XXXX"
+            className="mt-2 w-full rounded-2xl bg-mist px-4 py-3.5 tracking-[0.3em] text-ink ring-1 ring-line outline-none placeholder:tracking-normal placeholder:text-ink-soft/60 focus:ring-2 focus:ring-plum"
+          />
+        </label>
         <button
           type="submit"
           disabled={state === "loading"}
@@ -170,8 +124,8 @@ export function TrackingForm() {
         {typeof state === "object" &&
           (state.ok ? (
             <div className="space-y-4">
-              {groupByOrder(state.shipments).map((parcels) => (
-                <OrderCard key={`${parcels[0].orderNo}-${parcels[0].trackingNo}`} parcels={parcels} />
+              {state.shipments.map((s, i) => (
+                <Parcel key={`${s.trackingNo}-${i}`} s={s} />
               ))}
             </div>
           ) : (

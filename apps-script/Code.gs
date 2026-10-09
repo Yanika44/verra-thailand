@@ -9,29 +9,35 @@
  *    Copy the /exec URL into TRACKING_API_URL on Vercel.
  *
  * Sheet layout (first sheet, header row 1 — same columns as mock/tracking-orders.csv):
- *   Order No. | Customer Name | Phone Last 4 | Product | Ship Date | Carrier | Tracking No.
- * Columns are found by header text, so their order doesn't matter.
- * One row per parcel: an order shipped in two boxes is two rows.
+ *   the Flash Express export (mock/template.xlsx), pasted as is:
+ *     เลขพัสดุ | ผู้ส่ง | ชื่อผู้รับ | เบอร์โทรผู้รับ | รายละเอียดที่อยู่ผู้รับ | น้ำหนัก | ค่าบริการขนส่งที่เก็บจริง | วิธีชำระเงิน
+ *   plus two columns this script fills in when rows are pasted (admins can change them):
+ *     ขนส่ง (Flash, or ไปรษณีย์ไทย for numbers like EF123456789TH) | วันที่ส่ง (today)
+ * Columns are found by header text, so their order doesn't matter. One row = one parcel.
+ * Rows that aren't parcels (blank lines, the export's "** ส่วนลด… **" summary) are skipped.
  *
- * Order No. is filled automatically (onEdit) once a row has name, phone and ship date:
- * VR-<yyMMdd of ship date>-<NN>. Same customer (name + phone) on the same ship date
- * reuses that order's number. Numbers typed by hand are never overwritten.
- *
- * Search = customer's first name + last 4 digits of phone. Returns only matching rows,
- * never the sheet. Matching rules mirror src/lib/tracking.ts — keep them in sync.
+ * Search = last 4 digits of the receiver's phone. Returns only the matching parcels with the
+ * receiver's surname masked, never the sheet. Rules mirror src/lib/tracking.ts — keep in sync.
  */
 
 const SHEET_NAME = ""; // blank = first sheet
 const COLUMNS = {
-  orderNo: "Order No.",
-  customerName: "Customer Name",
-  phoneLast4: "Phone Last 4",
-  product: "Product",
-  shipDate: "Ship Date",
-  carrier: "Carrier",
-  trackingNo: "Tracking No.",
+  trackingNo: "เลขพัสดุ",
+  sender: "ผู้ส่ง",
+  recipient: "ชื่อผู้รับ",
+  phone: "เบอร์โทรผู้รับ",
+  address: "รายละเอียดที่อยู่ผู้รับ",
+  weight: "น้ำหนัก",
+  shippingFee: "ค่าบริการขนส่งที่เก็บจริง",
+  payment: "วิธีชำระเงิน",
+  carrier: "ขนส่ง",
+  shipDate: "วันที่ส่ง",
 };
-const TITLES = /^(คุณ|นางสาว|นาง|นาย|น\.ส\.|ด\.ช\.|ด\.ญ\.|mr\.?|mrs\.?|ms\.?|miss)\s*/i;
+// The website needs only these; the rest of the export is kept in the sheet for the admins.
+const REQUIRED = ["trackingNo", "recipient", "phone", "carrier", "shipDate"];
+
+// Dropdown for the ขนส่ง column. Each must map to a carrier in src/lib/carriers.ts.
+const CARRIERS = ["Flash", "ไปรษณีย์ไทย"];
 
 function doGet(e) {
   const p = e.parameter || {};
@@ -42,19 +48,16 @@ function doGet(e) {
   // itself, so customers don't wait for Apps Script. The browser never receives this.
   if (p.action === "all") return json_({ rows: readShipments_() });
 
-  const name = normalizeName_(String(p.name || ""));
   const phone = String(p.phone || "").trim();
-  if (name.length < 2 || !/^\d{4}$/.test(phone)) return json_({ shipments: [] });
+  if (!/^\d{4}$/.test(phone)) return json_({ shipments: [] });
 
   const shipments = readShipments_()
-    .filter((r) => nameMatches_(r.customerName, name) && last4_(r.phone) === phone)
+    .filter((r) => last4_(r.phone) === phone)
     .map((r) => ({
-      orderNo: r.orderNo || undefined,
-      customerName: r.customerName,
-      product: r.product,
-      shipDate: r.shipDate,
-      carrier: r.carrier,
+      recipient: maskName_(r.recipient),
       trackingNo: r.trackingNo,
+      carrier: r.carrier,
+      shipDate: r.shipDate,
     }))
     .sort((a, b) => b.shipDate.localeCompare(a.shipDate));
 
@@ -62,12 +65,12 @@ function doGet(e) {
 }
 
 // Opening the spreadsheet is the slow part of a search (1–10 s on Google's side), so the
-// rows are cached. The cache is cleared whenever the sheet is edited or numbered, and
-// expires after CACHE_SECONDS anyway (covers changes onEdit can't see, like deleted rows).
+// rows are cached. The cache is cleared whenever the sheet is edited, and expires after
+// CACHE_SECONDS anyway (covers changes onEdit can't see, like deleted rows).
 const CACHE_SECONDS = 600;
 const CACHE_CHUNK = 20000; // chars per cache entry; a Thai char is 3 bytes, entries max 100 KB
 
-/** All data rows as plain strings: [{ orderNo, customerName, phone, product, shipDate, carrier, trackingNo }]. */
+/** Parcel rows as plain strings: [{ trackingNo, recipient, phone, carrier, shipDate }]. */
 function readShipments_() {
   const cache = CacheService.getScriptCache();
   const count = Number(cache.get("rows_count") || 0);
@@ -78,12 +81,8 @@ function readShipments_() {
     if (keys.every((k) => parts[k] != null)) return JSON.parse(keys.map((k) => parts[k]).join(""));
   }
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SHEET_NAME ? ss.getSheetByName(SHEET_NAME) : ss.getSheets()[0];
-  const values = sheet.getDataRange().getValues();
-  const header = values[0].map((h) => String(h).trim().toLowerCase());
-  const idx = {};
-  Object.keys(COLUMNS).forEach((k) => (idx[k] = header.indexOf(COLUMNS[k].toLowerCase())));
+  const values = mainSheet_().getDataRange().getValues();
+  const idx = columnIndexes_(values[0]);
   const cell = (row, k) => {
     if (idx[k] < 0) return "";
     const v = row[idx[k]];
@@ -92,16 +91,14 @@ function readShipments_() {
   };
   const rows = values
     .slice(1)
-    .filter((r) => cell(r, "customerName"))
     .map((r) => ({
-      orderNo: cell(r, "orderNo"),
-      customerName: cell(r, "customerName"),
-      phone: cell(r, "phoneLast4"),
-      product: cell(r, "product"),
-      shipDate: cell(r, "shipDate"),
-      carrier: cell(r, "carrier"),
       trackingNo: cell(r, "trackingNo"),
-    }));
+      recipient: cell(r, "recipient"),
+      phone: cell(r, "phone"),
+      carrier: cell(r, "carrier") || guessCarrier_(cell(r, "trackingNo")),
+      shipDate: cell(r, "shipDate"),
+    }))
+    .filter((r) => isParcel_(r.trackingNo, r.phone));
 
   try {
     const json = JSON.stringify(rows);
@@ -124,6 +121,18 @@ function clearCache_() {
   }
 }
 
+function mainSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return SHEET_NAME ? ss.getSheetByName(SHEET_NAME) : ss.getSheets()[0];
+}
+
+/** Header row values → { key: 0-based column index, -1 if missing }. */
+function columnIndexes_(headerRow) {
+  const header = headerRow.map((h) => String(h).trim());
+  const idx = {};
+  Object.keys(COLUMNS).forEach((k) => (idx[k] = header.indexOf(COLUMNS[k])));
+  return idx;
+}
 
 /**
  * Run this from the Apps Script editor (select testSetup → Run) to check the setup.
@@ -133,129 +142,83 @@ function testSetup() {
   const token = getToken_();
   console.log(token ? "✅ TOKEN is set" : "❌ TOKEN missing: Project Settings → Script properties → add TOKEN");
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SHEET_NAME ? ss.getSheetByName(SHEET_NAME) : ss.getSheets()[0];
+  const sheet = mainSheet_();
   if (sheet.getLastRow() === 0) setupSheet_(sheet);
   console.log("Reading sheet: " + sheet.getName() + " (" + (sheet.getLastRow() - 1) + " data rows)");
-  const header = sheet.getDataRange().getValues()[0].map((h) => String(h).trim().toLowerCase());
+  const idx = columnIndexes_(sheet.getDataRange().getValues()[0]);
   Object.keys(COLUMNS).forEach((k) => {
-    const found = header.indexOf(COLUMNS[k].toLowerCase()) >= 0;
-    const optional = k === "orderNo";
-    console.log((found ? "✅ " : optional ? "⚪ " : "❌ ") + COLUMNS[k] + (found ? "" : optional ? " (optional, not found)" : " — header not found in row 1"));
+    const required = REQUIRED.indexOf(k) >= 0;
+    console.log((idx[k] >= 0 ? "✅ " : required ? "❌ " : "⚪ ") + COLUMNS[k] + (idx[k] >= 0 ? "" : required ? " — header not found in row 1" : " (optional, not found)"));
   });
 
   if (token) {
-    const res = doGet({ parameter: { token: token, name: "สมใจ", phone: "1234" } });
-    console.log("Sample search สมใจ + 1234 → " + res.getContent());
+    const res = doGet({ parameter: { token: token, phone: "1234" } });
+    console.log("Sample search 1234 → " + res.getContent());
   }
 }
-
-// Dropdown for the Carrier column. Each must map to a carrier in src/lib/carriers.ts,
-// otherwise the website shows a copy button instead of "เช็กสถานะพัสดุ".
-const CARRIERS = ["Flash", "Kerry", "J&T", "ไปรษณีย์ไทย"];
 
 /** Adds a "VERRA" menu to the sheet so admins can re-run the formatting without the editor. */
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("VERRA")
     .addItem("จัดรูปแบบตาราง", "setupAdminView")
-    .addItem("ใส่เลข Order ให้แถวที่ยังว่าง", "fillOrderNumbers")
+    .addItem("เติมขนส่ง/วันที่ส่งให้แถวที่ยังว่าง", "fillMissing")
     .addToUi();
 }
 
-/** Simple trigger: number the rows the admin just edited or pasted. */
+/** Simple trigger: fill ขนส่ง and วันที่ส่ง on the rows the admin just pasted or edited. */
 function onEdit(e) {
   const sheet = e.range.getSheet();
-  const main = SHEET_NAME ? sheet.getParent().getSheetByName(SHEET_NAME) : sheet.getParent().getSheets()[0];
-  if (sheet.getSheetId() !== main.getSheetId()) return;
+  if (sheet.getSheetId() !== mainSheet_().getSheetId()) return;
   clearCache_();
   if (e.range.getLastRow() < 2) return;
-  numberRows_(sheet, Math.max(2, e.range.getRow()), e.range.getLastRow());
+  fillRows_(sheet, Math.max(2, e.range.getRow()), e.range.getLastRow());
 }
 
-/** Menu action: number every complete row that has no Order No. yet. */
-function fillOrderNumbers() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SHEET_NAME ? ss.getSheetByName(SHEET_NAME) : ss.getSheets()[0];
-  const n = sheet.getLastRow() >= 2 ? numberRows_(sheet, 2, sheet.getLastRow()) : 0;
-  ss.toast(n ? "ใส่เลข Order แล้ว " + n + " แถว" : "ทุกแถวมีเลข Order แล้ว", "VERRA", 5);
-}
-
-/** Assigns numbers to rows first..last (1-based). Returns how many were filled. */
-function numberRows_(sheet, first, last) {
-  const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(10000)) return 0;
-  try {
-    const values = sheet.getDataRange().getValues();
-    const header = values[0].map((h) => String(h).trim().toLowerCase());
-    const idx = {};
-    Object.keys(COLUMNS).forEach((k) => (idx[k] = header.indexOf(COLUMNS[k].toLowerCase())));
-    if (idx.orderNo < 0) return 0;
-
-    const props = PropertiesService.getDocumentProperties();
-    const counters = JSON.parse(props.getProperty("orderCounters") || "{}");
-    const rows = values.slice(1).map((r) => ({
-      orderNo: String(r[idx.orderNo] || "").trim(),
-      name: idx.customerName >= 0 ? String(r[idx.customerName]) : "",
-      phone: idx.phoneLast4 >= 0 ? String(r[idx.phoneLast4]) : "",
-      day: idx.shipDate >= 0 ? dayKey_(r[idx.shipDate]) : "",
-    }));
-    const assigned = assignOrderNumbers_(rows, first - 2, last - 2, counters);
-
-    assigned.forEach((a) => sheet.getRange(a.index + 2, idx.orderNo + 1).setValue(a.orderNo));
-    if (assigned.length) {
-      props.setProperty("orderCounters", JSON.stringify(counters));
-      clearCache_();
-    }
-    return assigned.length;
-  } finally {
-    lock.releaseLock();
-  }
+/** Menu action: fill ขนส่ง / วันที่ส่ง on every parcel row where they're blank. */
+function fillMissing() {
+  const sheet = mainSheet_();
+  const n = sheet.getLastRow() >= 2 ? fillRows_(sheet, 2, sheet.getLastRow()) : 0;
+  sheet.getParent().toast(n ? "เติมข้อมูลแล้ว " + n + " แถว" : "ทุกแถวมีขนส่งและวันที่ส่งแล้ว", "VERRA", 5);
 }
 
 /**
- * Pure numbering logic (tested locally). rows[i] = { orderNo, name, phone, day: "yyMMdd" | "" }.
- * Fills rows from..to (0-based, inclusive) that are complete and have no orderNo.
- * counters = { yyMMdd: highest NN ever issued } — updated in place so deleted numbers aren't reused.
+ * Rows first..last (1-based): blank ขนส่ง → guessed from the tracking number, blank วันที่ส่ง → today.
+ * Values already there are never overwritten. Returns how many rows changed.
  */
-function assignOrderNumbers_(rows, from, to, counters) {
-  const customerKey = (r) => normalizeName_(r.name) + "|" + last4_(r.phone) + "|" + r.day;
-  const known = {};
-  rows.forEach((r) => {
-    const m = /^VR-(\d{6})-(\d+)$/.exec(r.orderNo);
-    if (m) counters[m[1]] = Math.max(counters[m[1]] || 0, Number(m[2]));
-    if (r.orderNo && r.name && r.day) known[customerKey(r)] = known[customerKey(r)] || r.orderNo;
+function fillRows_(sheet, first, last) {
+  const idx = columnIndexes_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  if (idx.trackingNo < 0 || idx.phone < 0) return 0;
+  const width = sheet.getLastColumn();
+  const values = sheet.getRange(first, 1, last - first + 1, width).getValues();
+  const today = new Date(Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyy/MM/dd"));
+
+  let changed = 0;
+  const carriers = [];
+  const dates = [];
+  values.forEach((r) => {
+    const trackingNo = String(r[idx.trackingNo]).trim();
+    const parcel = isParcel_(trackingNo, String(r[idx.phone]));
+    let carrier = idx.carrier >= 0 ? r[idx.carrier] : "";
+    let date = idx.shipDate >= 0 ? r[idx.shipDate] : "";
+    if (parcel && carrier === "") carrier = guessCarrier_(trackingNo);
+    if (parcel && date === "") date = today;
+    if (carrier !== (idx.carrier >= 0 ? r[idx.carrier] : "") || date !== (idx.shipDate >= 0 ? r[idx.shipDate] : "")) changed++;
+    carriers.push([carrier]);
+    dates.push([date]);
   });
-
-  const out = [];
-  for (let i = Math.max(0, from); i <= Math.min(to, rows.length - 1); i++) {
-    const r = rows[i];
-    if (r.orderNo || !normalizeName_(r.name) || !last4_(r.phone) || !r.day) continue;
-    const key = customerKey(r);
-    if (!known[key]) {
-      counters[r.day] = (counters[r.day] || 0) + 1;
-      known[key] = "VR-" + r.day + "-" + String(counters[r.day]).padStart(2, "0");
-    }
-    r.orderNo = known[key];
-    out.push({ index: i, orderNo: r.orderNo });
-  }
-  return out;
-}
-
-/** Ship Date cell → "yyMMdd" (Bangkok), or "" if it isn't a date. */
-function dayKey_(v) {
-  if (Object.prototype.toString.call(v) === "[object Date]" && !isNaN(v.getTime())) {
-    return Utilities.formatDate(v, "Asia/Bangkok", "yyMMdd");
-  }
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v).trim());
-  return m ? m[1].slice(2) + m[2] + m[3] : "";
+  if (!changed) return 0;
+  if (idx.carrier >= 0) sheet.getRange(first, idx.carrier + 1, carriers.length, 1).setValues(carriers);
+  if (idx.shipDate >= 0) sheet.getRange(first, idx.shipDate + 1, dates.length, 1).setValues(dates);
+  clearCache_();
+  return changed;
 }
 
 /**
  * Makes the order sheet easy to fill in. Safe to run again at any time; data is kept.
- * - Ship Date: date picker on double-click, shown as "7 ต.ค. 2026", rejects typos like 2569
- * - Carrier: dropdown (other names allowed with a warning)
- * - Phone Last 4: plain text so a leading 0 is kept
+ * - วันที่ส่ง: date picker on double-click, shown as "7 ต.ค. 2026", rejects typos like 2569
+ * - ขนส่ง: dropdown (Flash / ไปรษณีย์ไทย)
+ * - เบอร์โทรผู้รับ: plain text so a leading 0 is kept
  * - Rows are shaded by ship date: one colour per day, alternating, so days are easy to tell apart
  * - Header row: brand colour, frozen, warns before editing, with notes explaining each column
  */
@@ -263,12 +226,12 @@ function setupAdminView() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ss.setSpreadsheetTimeZone("Asia/Bangkok");
   ss.setSpreadsheetLocale("th_TH"); // typed dates read as day/month/year
-  const sheet = SHEET_NAME ? ss.getSheetByName(SHEET_NAME) : ss.getSheets()[0];
+  const sheet = mainSheet_();
   if (sheet.getLastRow() === 0) setupSheet_(sheet);
 
-  const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((h) => String(h).trim().toLowerCase());
-  const col = (k) => header.indexOf(COLUMNS[k].toLowerCase()) + 1; // 1-based, 0 = missing
-  const lastCol = header.length;
+  const idx = columnIndexes_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  const col = (k) => idx[k] + 1; // 1-based, 0 = missing
+  const lastCol = sheet.getLastColumn();
   const rows = sheet.getMaxRows() - 1;
   const body = (c) => sheet.getRange(2, c, rows, 1);
 
@@ -283,17 +246,15 @@ function setupAdminView() {
   head.protect().setDescription("VERRA header").setWarningOnly(true);
 
   const notes = {
-    orderNo: "ระบบใส่ให้อัตโนมัติเมื่อกรอกชื่อ เบอร์ และวันที่ส่งครบ (ลูกค้าคนเดิม ส่งวันเดียวกัน = เลขเดียวกัน) ลบเลขทิ้งเพื่อให้ระบบออกใหม่ได้",
-    customerName: "ชื่อ-นามสกุลลูกค้า ลูกค้าจะค้นด้วยชื่อจริง (คำแรก)",
-    phoneLast4: "เบอร์โทร 4 หลักท้าย หรือใส่เบอร์เต็มก็ได้",
-    product: "ชื่อสินค้าที่ส่ง",
-    shipDate: "ดับเบิลคลิกเพื่อเลือกวันที่จากปฏิทิน",
-    carrier: "เลือกบริษัทขนส่งจากรายการ",
-    trackingNo: "เลข Tracking จากบริษัทขนส่ง",
+    trackingNo: "วางข้อมูลจากไฟล์ export ของ Flash ได้ทั้งแถว (ไม่ต้องเอาแถวหัวตาราง) ระบบเติมขนส่งและวันที่ส่งให้เอง",
+    recipient: "ลูกค้าเห็นชื่อนี้ในหน้าเว็บ โดยนามสกุลจะถูกปิดบางส่วน",
+    phone: "ลูกค้าค้นหาด้วยเบอร์ 4 หลักท้าย",
+    carrier: "ระบบเลือกให้อัตโนมัติ (เลขแบบ EF123456789TH = ไปรษณีย์ไทย นอกนั้น Flash) เปลี่ยนจากรายการได้",
+    shipDate: "ระบบใส่วันที่วันนี้ให้อัตโนมัติ ดับเบิลคลิกเพื่อเปลี่ยนจากปฏิทิน",
   };
   Object.keys(notes).forEach((k) => col(k) && sheet.getRange(1, col(k)).setNote(notes[k]));
 
-  // Ship Date: real dates only, with picker
+  // วันที่ส่ง: real dates only, with picker
   if (col("shipDate")) {
     body(col("shipDate"))
       .setNumberFormat("d mmm yyyy")
@@ -306,18 +267,18 @@ function setupAdminView() {
       );
   }
 
-  // Carrier dropdown
+  // ขนส่ง dropdown
   if (col("carrier")) {
     body(col("carrier")).setDataValidation(
       SpreadsheetApp.newDataValidation()
         .requireValueInList(CARRIERS, true)
-        .setAllowInvalid(true)
-        .setHelpText("เลือกจากรายการ ถ้าใช้ขนส่งอื่น เว็บจะแสดงปุ่มคัดลอกเลข Tracking แทน")
+        .setAllowInvalid(false)
+        .setHelpText("เลือก Flash หรือ ไปรษณีย์ไทย")
         .build(),
     );
   }
 
-  if (col("phoneLast4")) body(col("phoneLast4")).setNumberFormat("@");
+  if (col("phone")) body(col("phone")).setNumberFormat("@");
 
   // Alternate shading per ship date (rows are entered day by day)
   if (col("shipDate")) {
@@ -335,10 +296,10 @@ function setupAdminView() {
     sheet.setConditionalFormatRules(others.concat([shade]));
   }
 
-  const widths = { orderNo: 100, customerName: 180, phoneLast4: 110, product: 320, shipDate: 120, carrier: 130, trackingNo: 160 };
+  const widths = { trackingNo: 160, sender: 170, recipient: 190, phone: 120, address: 320, weight: 80, shippingFee: 110, payment: 140, carrier: 120, shipDate: 120 };
   Object.keys(widths).forEach((k) => col(k) && sheet.setColumnWidth(col(k), widths[k]));
 
-  const missing = Object.keys(COLUMNS).filter((k) => k !== "orderNo" && !col(k));
+  const missing = REQUIRED.filter((k) => !col(k));
   const msg = missing.length
     ? "จัดรูปแบบแล้ว แต่ไม่พบคอลัมน์: " + missing.map((k) => COLUMNS[k]).join(", ")
     : "จัดรูปแบบตารางเรียบร้อย";
@@ -363,31 +324,33 @@ function getToken_() {
   return typeof TRACKING_TOKEN !== "undefined" ? TRACKING_TOKEN : null;
 }
 
-/** Fills an empty sheet with the header row and sample rows (delete the samples later). */
+/** Fills an empty sheet with the header row and one sample row (delete it later). */
 function setupSheet_(sheet) {
   const header = Object.keys(COLUMNS).map((k) => COLUMNS[k]);
-  const samples = [
-    ["VR-261003-01", "วิภา รักสะอาด", "5678", "เซ็ตผ้าปูที่นอน 5 ฟุต (รวมผ้านวม) สีลาเวนเดอร์", "2026-10-03", "Kerry", "KEX000000002"],
-    ["VR-261003-01", "วิภา รักสะอาด", "5678", "หมอนมาตรฐาน คอลลาเจน (3,300กรัม) x2", "2026-10-03", "ไปรษณีย์ไทย", "EF000000003TH"],
-    ["VR-261005-01", "สมใจ ใจดี", "1234", "เซ็ตผ้าปูที่นอน 6 ฟุต สีขาว", "2026-10-05", "Flash", "TH0000000001"],
-  ];
+  const sample = ["TH0000000001A", "โรงงานเวอร์ร่าไทยแลนด์", "สมใจ ใจดี", "0811111234", "99/1 ถ.ตัวอย่าง", "2", "53", "ชำระเงินโดยผู้ส่ง", "Flash", "2026-10-05"];
   sheet.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight("bold");
-  // Phone Last 4 as plain text so a leading zero survives
-  sheet.getRange(2, 3, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
-  sheet.getRange(2, 1, samples.length, header.length).setValues(samples);
+  // เบอร์โทรผู้รับ as plain text so a leading zero survives
+  sheet.getRange(2, header.indexOf(COLUMNS.phone) + 1, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+  sheet.getRange(2, 1, 1, header.length).setValues([sample]);
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, header.length);
   clearCache_();
-  console.log("✅ Sheet was empty: added header row and " + samples.length + " sample rows");
+  console.log("✅ Sheet was empty: added header row and a sample row");
 }
 
-function normalizeName_(s) {
-  return s.normalize("NFC").trim().toLowerCase().replace(/\s+/g, " ").replace(TITLES, "").trim();
+/** Thailand Post numbers look like EF123456789TH; everything else goes by Flash. Mirrors src/lib/carriers.ts. */
+function guessCarrier_(trackingNo) {
+  return /^[A-Z]{2}\d{9}TH$/i.test(String(trackingNo).trim()) ? "ไปรษณีย์ไทย" : "Flash";
 }
 
-function nameMatches_(sheetName, typed) {
-  const n = normalizeName_(sheetName);
-  return !!n && (n === typed || n.split(" ")[0] === typed);
+/** A real parcel row, not a blank line, day heading or the "** ส่วนลด… **" summary row. */
+function isParcel_(trackingNo, phone) {
+  return /^[A-Z0-9-]{6,}$/i.test(trackingNo) && last4_(phone).length === 4;
+}
+
+/** "นิติมา มะมม" → "นิติมา ม***"; single-word names are shown as is. */
+function maskName_(name) {
+  const words = String(name).normalize("NFC").trim().split(/\s+/);
+  return words.map((w, i) => (i === 0 ? w : Array.from(w)[0] + "***")).join(" ");
 }
 
 function last4_(v) {

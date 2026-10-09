@@ -1,11 +1,10 @@
-/** One shipment row from the order sheet. A customer may have several. */
+/** One parcel as shown to the customer. A phone number may have several. */
 export type Shipment = {
-  orderNo?: string;
-  customerName: string;
-  product: string;
-  shipDate: string;
-  carrier: string;
+  /** Receiver name with the surname masked ("นิติมา ม***"), see maskName. */
+  recipient: string;
   trackingNo: string;
+  carrier: string;
+  shipDate: string;
 };
 
 export type TrackingResult = { ok: true; shipments: Shipment[] } | { ok: false; error: TrackingError };
@@ -15,85 +14,77 @@ export type TrackingError = "invalid" | "not_found" | "rate_limited" | "unavaila
 export const PHONE_LAST4_PATTERN = /^\d{4}$/;
 
 /**
- * Sheet header → field. Matching is by header text, so column order in the
- * sheet doesn't matter. Keep in sync with apps-script/Code.gs.
+ * Sheet header → field. The sheet follows the Flash Express export (mock/template.xlsx)
+ * plus two columns the Apps Script fills in: ขนส่ง and วันที่ส่ง. Columns are matched by
+ * header text, so their order doesn't matter. Keep in sync with apps-script/Code.gs.
  */
 export const SHEET_COLUMNS = {
-  orderNo: "Order No.",
-  customerName: "Customer Name",
-  phoneLast4: "Phone Last 4",
-  product: "Product",
-  shipDate: "Ship Date",
-  carrier: "Carrier",
-  trackingNo: "Tracking No.",
+  trackingNo: "เลขพัสดุ",
+  recipient: "ชื่อผู้รับ",
+  phone: "เบอร์โทรผู้รับ",
+  carrier: "ขนส่ง",
+  shipDate: "วันที่ส่ง",
 } as const;
 
-const TITLES = /^(คุณ|นางสาว|นาง|นาย|น\.ส\.|ด\.ช\.|ด\.ญ\.|mr\.?|mrs\.?|ms\.?|miss)\s*/i;
-
-/** "คุณ สมใจ  ใจดี" → "สมใจ ใจดี" */
-export function normalizeName(name: string) {
-  return name.normalize("NFC").trim().toLowerCase().replace(/\s+/g, " ").replace(TITLES, "").trim();
-}
-
-/** Last 4 digits of whatever was typed in the sheet ("812345678", "081-234-5678", 678). */
+/** Last 4 digits of whatever is in the sheet ("0969199299", "096-919-9299", 9299). */
 export function phoneLast4(value: string) {
   const digits = value.replace(/\D/g, "");
   // Sheets drops a leading zero from numbers like 0123
   return digits ? digits.padStart(4, "0").slice(-4) : "";
 }
 
-/** Customer typed their first name; the sheet may hold the full name. */
-export function nameMatches(sheetName: string, typedName: string) {
-  const sheet = normalizeName(sheetName);
-  const typed = normalizeName(typedName);
-  if (!sheet || !typed) return false;
-  return sheet === typed || sheet.split(" ")[0] === typed;
+/**
+ * Anyone can type 4 random digits, so only the first word of the name is shown in full:
+ * "นิติมา มะมม" → "นิติมา ม***". Single-word names ("คุณโอ๋") are shown as is.
+ */
+export function maskName(name: string) {
+  const [first = "", ...rest] = name.normalize("NFC").trim().split(/\s+/);
+  return [first, ...rest.map((w) => `${Array.from(w)[0]}***`)].join(" ");
 }
 
-/** One data row of the order sheet, as plain strings. */
+/** A real parcel row, not a blank line, day heading or the export's "** ส่วนลด… **" summary row. */
+export function isParcel(trackingNo: string, phone: string) {
+  return /^[A-Z0-9-]{6,}$/i.test(trackingNo) && phoneLast4(phone).length === 4;
+}
+
+/** One data row of the order sheet, as plain strings (only the columns the website needs). */
 export type SheetRow = {
-  orderNo: string;
-  customerName: string;
-  phone: string;
-  product: string;
-  shipDate: string;
-  carrier: string;
   trackingNo: string;
+  recipient: string;
+  phone: string;
+  carrier: string;
+  shipDate: string;
 };
 
-/** Table with the header row first (CSV / sheet values) → data rows. Columns are found by header text. */
+/** Table with the header row first (CSV / sheet values) → parcel rows. Columns are found by header text. */
 export function rowsFromTable(table: string[][]): SheetRow[] {
   const [header = [], ...data] = table;
-  const col = (label: string) => header.findIndex((h) => h.trim().toLowerCase() === label.toLowerCase());
+  const col = (label: string) => header.findIndex((h) => h.trim() === label);
   const idx = Object.fromEntries(
     Object.entries(SHEET_COLUMNS).map(([key, label]) => [key, col(label)]),
   ) as Record<keyof typeof SHEET_COLUMNS, number>;
   const cell = (row: string[], key: keyof typeof SHEET_COLUMNS) => (idx[key] >= 0 ? (row[idx[key]] ?? "").trim() : "");
 
   return data
-    .filter((r) => cell(r, "customerName"))
     .map((r) => ({
-      orderNo: cell(r, "orderNo"),
-      customerName: cell(r, "customerName"),
-      phone: cell(r, "phoneLast4"),
-      product: cell(r, "product"),
-      shipDate: cell(r, "shipDate"),
-      carrier: cell(r, "carrier"),
       trackingNo: cell(r, "trackingNo"),
-    }));
+      recipient: cell(r, "recipient"),
+      phone: cell(r, "phone"),
+      carrier: cell(r, "carrier"),
+      shipDate: cell(r, "shipDate"),
+    }))
+    .filter((r) => isParcel(r.trackingNo, r.phone));
 }
 
-/** This customer's shipments, newest first. Mirrors doGet in apps-script/Code.gs. */
-export function searchRows(rows: SheetRow[], firstName: string, last4: string): Shipment[] {
+/** Parcels sent to this phone number, newest first. Mirrors doGet in apps-script/Code.gs. */
+export function searchRows(rows: SheetRow[], last4: string): Shipment[] {
   return rows
-    .filter((r) => nameMatches(r.customerName, firstName) && phoneLast4(r.phone) === last4)
+    .filter((r) => phoneLast4(r.phone) === last4)
     .map((r) => ({
-      orderNo: r.orderNo || undefined,
-      customerName: r.customerName,
-      product: r.product,
-      shipDate: r.shipDate,
-      carrier: r.carrier,
+      recipient: maskName(r.recipient),
       trackingNo: r.trackingNo,
+      carrier: r.carrier,
+      shipDate: r.shipDate,
     }))
     .sort((a, b) => b.shipDate.localeCompare(a.shipDate));
 }
