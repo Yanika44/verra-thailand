@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Gilda_Display, Noto_Sans_Thai } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { site } from "@/lib/content";
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           {children}
         </main>
         <SiteFooter />
+        <Analytics />
       </body>
     </html>
   );
